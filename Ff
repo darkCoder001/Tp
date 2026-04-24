@@ -1,0 +1,89 @@
+flowchart TD
+    %% ─────────────────────────────────────────
+    %% COMPUTATION ENDPOINT
+    %% ─────────────────────────────────────────
+
+    A([🚀 POST /features/computation]):::endpoint
+
+    A --> B[Parse Payload\ns3_credentials · bucket · folder_path\nbatch_size · rerun · how_many_features]:::api
+
+    B --> C[s3_reader.py\nList .parquet files in S3 folder\nvia aioboto3 async session]:::s3
+
+    C --> D{rerun flag?}:::decision
+
+    D -- "rerun=False" --> E[Skip files where\nS3 LastModified matches DB\n& batch_status = complete]:::skip
+    D -- "rerun=True" --> F[Mark all file_metadata\n& batch_status rows\nas pending]:::rerun
+
+    E --> G
+    F --> G
+
+    G[(file_metadata\nfile_key · last_modified · status)]:::db
+
+    G --> H[_yield_batches\nStream Parquet rows\nYield fixed-size transaction batches]:::batch
+
+    H --> HF{how_many_features?}:::decision
+
+    HF -- "ALL" --> HF1[Run all 6 red flag rules\nPSP · Country Sensitivity · Country Mismatch\nOpaque · BCEF · MSB]:::rules
+
+    HF -- "SELECTED" --> HF2[Read selected_features array\nfrom payload]:::rerun
+    HF2 --> HF3[Run only selected rules\ne.g. PSP · BCEF]:::rules
+
+    HF1 --> I1[PSP]:::flag
+    HF1 --> I2[Country Sensitivity]:::flag
+    HF1 --> I3[Country Mismatch]:::flag
+    HF1 --> I4[Opaque]:::flag
+    HF1 --> I5[BCEF]:::flag
+    HF1 --> I6[MSB]:::flag
+
+    HF3 --> I7[Selected\nFeatures Only]:::flagsel
+
+    I1 & I2 & I3 & I4 & I5 & I6 --> J{Batch outcome}:::decision
+    I7 --> J
+
+    J -- "✓ success" --> K[(batch_status\nstatus = complete)]:::dbgreen
+    J -- "✗ failed" --> L[(batch_status\nstatus = failed\nerror logged)]:::dberr
+
+    K --> M[Postgres Writer\nWrite flagged rows to result table]:::writer
+
+    M --> N[(compact_transaction_result\ntxn_key · business_line · tenant_cd\npsp · country_sensitivity · country_mismatch\nopaque · bcef · msb)]:::db
+
+    N --> O([✅ Return computation summary\nfiles_processed · batches_complete\nbatches_failed · total_flagged]):::endpoint
+
+    %% ─────────────────────────────────────────
+    %% LOOKUP ENDPOINT
+    %% ─────────────────────────────────────────
+
+    P([🔍 POST /transactions/lookup]):::endpoint2
+
+    P --> Q[Parse Payload\ntransaction_keys · business_line\ntenant_cd · features array]:::api2
+
+    Q --> R[Query Builder\nConstruct SELECT for requested\nfeature columns only]:::batch2
+
+    R --> S[(compact_transaction_result\nWHERE txn_key IN ...\nAND business_line = ?\nAND tenant_cd = ?)]:::db
+
+    S --> T[Response Serializer\nProject requested features\nSerialize to JSON]:::writer2
+
+    T --> U([✅ 200 OK\nMatched transactions with\nrequested feature columns]):::endpoint2
+
+    %% ─────────────────────────────────────────
+    %% STYLES
+    %% ─────────────────────────────────────────
+
+    classDef endpoint  fill:#0d2137,stroke:#00d4ff,color:#00d4ff,rx:20
+    classDef endpoint2 fill:#0d2a1e,stroke:#00e5a0,color:#00e5a0,rx:20
+    classDef api       fill:#111827,stroke:#00d4ff,color:#e2e8f0
+    classDef api2      fill:#111827,stroke:#00e5a0,color:#e2e8f0
+    classDef s3        fill:#1a1535,stroke:#a78bfa,color:#e2e8f0
+    classDef decision  fill:#1c1a10,stroke:#f5a623,color:#f5a623
+    classDef skip      fill:#111827,stroke:#64748b,color:#94a3b8
+    classDef rerun     fill:#111827,stroke:#f5a623,color:#f5a623
+    classDef db        fill:#0f1f35,stroke:#a78bfa,color:#c4b5fd
+    classDef dbgreen   fill:#0a2018,stroke:#00e5a0,color:#00e5a0
+    classDef dberr     fill:#200d12,stroke:#ff4d6a,color:#ff4d6a
+    classDef batch     fill:#1c1a10,stroke:#f5a623,color:#e2e8f0
+    classDef batch2    fill:#1c1a10,stroke:#f5a623,color:#e2e8f0
+    classDef rules     fill:#200d12,stroke:#ff4d6a,color:#e2e8f0
+    classDef flag      fill:#1a0d10,stroke:#ff4d6a,color:#fca5a5,font-size:11px
+    classDef flagsel   fill:#1a0d10,stroke:#f5a623,color:#fde68a,font-size:11px
+    classDef writer    fill:#0a2018,stroke:#00e5a0,color:#e2e8f0
+    classDef writer2   fill:#0a2018,stroke:#00e5a0,color:#e2e8f0
