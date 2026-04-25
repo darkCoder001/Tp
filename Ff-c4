@@ -1,0 +1,29 @@
+C4Context
+    title Features Factory — C4 Context & Container Diagram
+
+    Person(client, "API Client", "External system or user hitting the REST API")
+
+    System_Boundary(ff, "Features Factory") {
+
+        Container(fastapi, "FastAPI Layer", "Python / FastAPI", "Exposes /features/computation and /transactions/lookup endpoints")
+
+        Container(factory, "Factory", "Python", "Orchestrates batching, rerun logic, and feature selection (ALL vs SELECTED)")
+
+        Container(features, "Features", "Python", "Rule-based red flag logic: PSP, Country Sensitivity, Country Mismatch, Opaque, BCEF, MSB")
+
+        Container(utilities, "Utilities", "Python / aioboto3 / SQLAlchemy", "S3 reader, Postgres writer, CRUD services for file_metadata, batch_status, transactions")
+
+        ContainerDb(postgres, "PostgreSQL", "Database", "Stores file_metadata, batch_status, compact_transaction_result")
+    }
+
+    System_Ext(s3, "AWS S3", "Stores raw .parquet transaction files")
+
+    Rel(client, fastapi, "POST /features/computation\nPOST /transactions/lookup", "HTTPS / JSON")
+    Rel(fastapi, factory, "Triggers batch processing", "internal")
+    Rel(factory, features, "Dispatches selected red flag rules", "internal")
+    Rel(factory, utilities, "Reads Parquet via S3 reader\nUpdates batch status", "internal")
+    Rel(features, utilities, "Writes flagged results via Postgres writer", "internal")
+    Rel(utilities, postgres, "Reads / Writes", "SQLAlchemy async")
+    Rel(utilities, s3, "Lists and streams .parquet files", "aioboto3 async")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
