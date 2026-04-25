@@ -1,0 +1,163 @@
+flowchart TB
+    %% ─────────────────────────────────────────
+    %% CLIENT
+    %% ─────────────────────────────────────────
+    CLIENT(["🌐 API Client\nHTTP Consumer"]):::client
+
+    CLIENT -->|"POST /features/computation\n{s3_creds, folder_path, batch_size,\nrerun, how_many_features,\nselected_features[ ]}"| EP1
+    CLIENT -->|"POST /transactions/lookup\n{txn_keys, business_line,\ntenant_cd, features[ ]}"| EP2
+
+    %% ─────────────────────────────────────────
+    %% CONFIG
+    %% ─────────────────────────────────────────
+    subgraph CFG["⚙️  config/"]
+        direction LR
+        CF1["📄 settings.py\nDB URL · S3 defaults\nBatch size · Env vars"]:::config
+        CF2["📄 logging.py\nLog levels · Handlers"]:::config
+    end
+
+    %% ─────────────────────────────────────────
+    %% FASTAPI LAYER
+    %% ─────────────────────────────────────────
+    subgraph FAPI["⚡ src/fastapi/  — API Gateway Layer"]
+        direction TB
+        EP1["🔵 POST /features/computation\nsrc/fastapi/computation_router.py"]:::api
+        EP2["🟢 POST /transactions/lookup\nsrc/fastapi/lookup_router.py"]:::api
+        MW["🛡️ Middleware\nsrc/fastapi/middleware.py\nAuth · CORS · Request logging"]:::api
+    end
+
+    EP1 & EP2 --- MW
+
+    %% ─────────────────────────────────────────
+    %% FACTORY LAYER
+    %% ─────────────────────────────────────────
+    subgraph FACTORY["🏭 src/factory/  — Orchestration & Processing Core"]
+        direction TB
+
+        subgraph ORCH["Orchestrator"]
+            FO["📄 feature_orchestrator.py\nEntry point · wires S3 → Batch → Features → DB"]:::factory
+        end
+
+        subgraph BPROC["Batch Processor"]
+            BP["📄 batch_processor.py\n_yield_batches()\nStream Parquet rows into fixed-size chunks"]:::factory
+        end
+
+        subgraph FSEL["Feature Selector"]
+            FS["📄 selected_feature_application.py\nhow_many_features = ALL → run all 6\nhow_many_features = SELECTED → run selected_features[ ]"]:::factory
+        end
+
+        subgraph RRUN["Rerun Handler"]
+            RR["📄 rerun_handler.py\nrerun=False → skip unchanged files\nrerun=True  → mark all pending"]:::factory
+        end
+
+        FO --> BP
+        FO --> RR
+        BP --> FS
+    end
+
+    MW -->|"computation request"| FO
+    MW -->|"lookup request"| LQ
+
+    %% ─────────────────────────────────────────
+    %% FEATURES LAYER
+    %% ─────────────────────────────────────────
+    subgraph FEATURES["🚩 src/features/  — Red Flag Rule Engine"]
+        direction LR
+        F1["📄 psp.py\nPSP Flag Logic"]:::feature
+        F2["📄 country_sensitivity.py\nCountry Sensitivity Logic"]:::feature
+        F3["📄 country_mismatch.py\nCountry Mismatch Logic"]:::feature
+        F4["📄 opaque.py\nOpaque Entity Logic"]:::feature
+        F5["📄 bcef.py\nBCEF Flag Logic"]:::feature
+        F6["📄 msb.py\nMSB Flag Logic"]:::feature
+    end
+
+    FS -->|"dispatches to selected rules"| F1
+    FS -->|"dispatches to selected rules"| F2
+    FS -->|"dispatches to selected rules"| F3
+    FS -->|"dispatches to selected rules"| F4
+    FS -->|"dispatches to selected rules"| F5
+    FS -->|"dispatches to selected rules"| F6
+
+    %% ─────────────────────────────────────────
+    %% UTILITIES LAYER
+    %% ─────────────────────────────────────────
+    subgraph UTILS["🔧 src/utilities/  — Infrastructure & I/O"]
+        direction TB
+
+        subgraph READER["Reader"]
+            S3R["📄 reader/s3_reader.py\n_cached_aioboto3_session()\n_ensure_file_metadata()\n_read_one_parquet_object()\n_parquet_batch_iterator()\nread_parquet_in_batches_async()"]:::util
+        end
+
+        subgraph WRITER["Writer"]
+            PGW["📄 writer/postgres_writer.py\nWrite batch results →\ncompact_transaction_result"]:::util
+        end
+
+        subgraph CRUD["CRUD Services"]
+            CR1["📄 crud/file_metadata_crud.py\nupsert · fetch · status update"]:::util
+            CR2["📄 crud/batch_status_crud.py\ncreate · mark complete/failed"]:::util
+            CR3["📄 crud/transaction_crud.py\nbulk insert · lookup query"]:::util
+        end
+
+        subgraph DBCONN["DB"]
+            DB["📄 db/session.py\nAsyncSession · SQLAlchemy\nConnection pool"]:::util
+        end
+
+        LQ["📄 lookup_service.py\nBuild SELECT · project features\nSerialize response"]:::util
+    end
+
+    FO -->|"list S3 objects"| S3R
+    S3R -->|"upsert file records"| CR1
+    F1 & F2 & F3 & F4 & F5 & F6 -->|"flagged batch rows"| PGW
+    PGW -->|"bulk insert"| CR3
+    BP -->|"update batch status"| CR2
+    CR1 & CR2 & CR3 --- DB
+    LQ -->|"query"| CR3
+
+    %% ─────────────────────────────────────────
+    %% POSTGRESQL TABLES
+    %% ─────────────────────────────────────────
+    subgraph PG["🗄️  PostgreSQL — Persistent Storage"]
+        direction LR
+        T1[("📋 file_metadata\nfile_key · s3_last_modified\nstatus · created_at")]:::db
+        T2[("📋 batch_status\nbatch_id · file_key\nstatus · error_msg\nlast_modified")]:::db
+        T3[("📋 compact_transaction_result\ntxn_key · business_line · tenant_cd\npsp · country_sensitivity\ncountry_mismatch · opaque\nbcef · msb")]:::db
+    end
+
+    DB --- T1 & T2 & T3
+
+    %% ─────────────────────────────────────────
+    %% S3
+    %% ─────────────────────────────────────────
+    subgraph S3["☁️  AWS S3"]
+        S3B[("🪣 S3 Bucket\n/folder_path/\n  ├── file_1.parquet\n  ├── file_2.parquet\n  └── file_N.parquet")]:::s3
+    end
+
+    S3R <-->|"aioboto3 async"| S3B
+
+    %% ─────────────────────────────────────────
+    %% TESTS
+    %% ─────────────────────────────────────────
+    subgraph TESTS["🧪 src/test/"]
+        direction LR
+        TF["📄 test/features/\ntest_psp.py\ntest_country_sensitivity.py\ntest_country_mismatch.py\ntest_opaque.py · test_bcef.py\ntest_msb.py"]:::test
+        TFac["📄 test/factory/\ntest_batch_processor.py\ntest_selected_feature_application.py\ntest_feature_orchestrator.py\ntest_rerun_handler.py"]:::test
+    end
+
+    TESTS -.->|"unit tests"| FEATURES
+    TESTS -.->|"integration tests"| FACTORY
+
+    CFG -.->|"injected config"| FAPI
+    CFG -.->|"injected config"| UTILS
+
+    %% ─────────────────────────────────────────
+    %% STYLES
+    %% ─────────────────────────────────────────
+    classDef client   fill:#0c1f35,stroke:#38bdf8,color:#38bdf8,font-weight:bold
+    classDef api      fill:#13103a,stroke:#818cf8,color:#c7d2fe
+    classDef factory  fill:#1c1505,stroke:#f59e0b,color:#fde68a
+    classDef feature  fill:#1f0510,stroke:#f43f5e,color:#fda4af
+    classDef util     fill:#051a12,stroke:#34d399,color:#a7f3d0
+    classDef db       fill:#120d2a,stroke:#a78bfa,color:#ddd6fe
+    classDef s3       fill:#0c1a2e,stroke:#38bdf8,color:#bae6fd
+    classDef config   fill:#0f1318,stroke:#64748b,color:#94a3b8
+    classDef test     fill:#1c0d05,stroke:#fb923c,color:#fed7aa
