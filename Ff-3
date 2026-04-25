@@ -1,0 +1,120 @@
+flowchart TB
+    %% ─────────────────────────────────────────
+    %% CLIENT
+    %% ─────────────────────────────────────────
+    CLIENT(["🌐 API Client"]):::client
+
+    CLIENT -->|"POST /features/computation"| EP1
+    CLIENT -->|"POST /transactions/lookup"| EP2
+
+    %% ─────────────────────────────────────────
+    %% FASTAPI
+    %% ─────────────────────────────────────────
+    subgraph FAPI["⚡ src/fastapi/"]
+        direction LR
+        EP1["computation_router.py"]:::api
+        EP2["lookup_router.py"]:::api
+    end
+
+    %% ─────────────────────────────────────────
+    %% FACTORY
+    %% ─────────────────────────────────────────
+    subgraph FACTORY["🏭 src/factory/"]
+        direction LR
+        BP["batch_processor.py"]:::factory
+        SF["selected_feature_application.py\nhow_many_features = ALL ▸ all 6 flags\nhow_many_features = SELECTED ▸ selected_features[ ]"]:::factory
+        RR["rerun_handler.py\nrerun=False ▸ skip unchanged\nrerun=True  ▸ mark pending"]:::factory
+    end
+
+    EP1 --> BP
+    EP1 --> RR
+    BP  --> SF
+
+    %% ─────────────────────────────────────────
+    %% FEATURES
+    %% ─────────────────────────────────────────
+    subgraph FEATURES["🚩 src/features/"]
+        direction LR
+        F1["psp.py"]:::feature
+        F2["country_sensitivity.py"]:::feature
+        F3["country_mismatch.py"]:::feature
+        F4["opaque.py"]:::feature
+        F5["bcef.py"]:::feature
+        F6["msb.py"]:::feature
+    end
+
+    SF --> F1 & F2 & F3 & F4 & F5 & F6
+
+    %% ─────────────────────────────────────────
+    %% UTILITIES
+    %% ─────────────────────────────────────────
+    subgraph UTILS["🔧 src/utilities/"]
+        direction LR
+        S3R["reader/s3_reader.py"]:::util
+        PGW["writer/postgres_writer.py"]:::util
+        CR1["crud/file_metadata_crud.py"]:::util
+        CR2["crud/batch_status_crud.py"]:::util
+        CR3["crud/transaction_crud.py"]:::util
+    end
+
+    EP1 --> S3R
+    F1 & F2 & F3 & F4 & F5 & F6 --> PGW
+    S3R --> CR1
+    BP  --> CR2
+    PGW --> CR3
+    EP2 --> CR3
+
+    %% ─────────────────────────────────────────
+    %% CONFIG
+    %% ─────────────────────────────────────────
+    subgraph CFG["⚙️ config/"]
+        CF["settings.py"]:::config
+    end
+
+    CFG -. "env · DB · S3 config" .-> FAPI
+    CFG -. "env · DB · S3 config" .-> UTILS
+
+    %% ─────────────────────────────────────────
+    %% POSTGRESQL
+    %% ─────────────────────────────────────────
+    subgraph PG["🗄️ PostgreSQL"]
+        direction LR
+        T1[("file_metadata")]:::db
+        T2[("batch_status")]:::db
+        T3[("compact_transaction_result")]:::db
+    end
+
+    CR1 --- T1
+    CR2 --- T2
+    CR3 --- T3
+
+    %% ─────────────────────────────────────────
+    %% S3
+    %% ─────────────────────────────────────────
+    S3B[("☁️ AWS S3\n.parquet files")]:::s3
+    S3R <-->|"aioboto3 async"| S3B
+
+    %% ─────────────────────────────────────────
+    %% TESTS
+    %% ─────────────────────────────────────────
+    subgraph TESTS["🧪 src/test/"]
+        direction LR
+        TF["test/features/\ntest_psp.py · test_bcef.py\ntest_msb.py · ..."]:::test
+        TFac["test/factory/\ntest_batch_processor.py\ntest_selected_feature_application.py"]:::test
+    end
+
+    TESTS -. "unit tests" .-> FEATURES
+    TESTS -. "integration tests" .-> FACTORY
+
+    %% ─────────────────────────────────────────
+    %% STYLES
+    %% ─────────────────────────────────────────
+    classDef client   fill:#0c1f35,stroke:#38bdf8,color:#38bdf8,font-weight:bold
+    classDef api      fill:#13103a,stroke:#818cf8,color:#c7d2fe
+    classDef factory  fill:#1c1505,stroke:#f59e0b,color:#fde68a
+    classDef feature  fill:#1f0510,stroke:#f43f5e,color:#fda4af
+    classDef util     fill:#051a12,stroke:#34d399,color:#a7f3d0
+    classDef db       fill:#120d2a,stroke:#a78bfa,color:#ddd6fe
+    classDef s3       fill:#0c1a2e,stroke:#38bdf8,color:#bae6fd
+    classDef config   fill:#0f1318,stroke:#64748b,color:#94a3b8
+    classDef test     fill:#1c0d05,stroke:#fb923c,color:#fed7aa
