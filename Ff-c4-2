@@ -1,0 +1,46 @@
+C4Context
+    title Features Factory — C4 Architecture Diagram
+
+    Person(client, "API Client", "Calls the REST API endpoints")
+
+    System_Boundary(ff, "Features Factory") {
+
+        Container(fastapi, "FastAPI Layer", "Python / FastAPI", "computation_router.py\nlookup_router.py")
+
+        Container(factory, "Factory", "Python", "batch_processor.py\nselected_feature_application.py\nrerun_handler.py")
+
+        Container(features, "Features", "Python", "psp.py · country_sensitivity.py\ncountry_mismatch.py · opaque.py\nbcef.py · msb.py")
+
+        Container(utilities, "Utilities", "Python", "s3_reader.py · postgres_writer.py\nfile_metadata_crud.py\nbatch_status_crud.py\ntransaction_crud.py")
+
+        ContainerDb(postgres, "PostgreSQL", "Database", "file_metadata\nbatch_status\ncompact_transaction_result")
+    }
+
+    System_Ext(s3, "AWS S3", "Raw .parquet transaction files")
+
+    Rel(client, fastapi, "POST /features/computation\nPOST /transactions/lookup")
+    Rel(fastapi, factory, "Triggers on /computation")
+    Rel(fastapi, utilities, "Triggers on /lookup")
+    Rel(factory, features, "Dispatches red flag rules")
+    Rel(factory, utilities, "S3 read · batch status update")
+    Rel(features, utilities, "Writes flagged results")
+    Rel(utilities, postgres, "Read / Write")
+    Rel(utilities, s3, "Stream .parquet files")
+
+    UpdateElementStyle(client, $fontColor="#111", $bgColor="#e0f2fe", $borderColor="#0369a1")
+    UpdateElementStyle(fastapi, $fontColor="#111", $bgColor="#ede9fe", $borderColor="#6d28d9")
+    UpdateElementStyle(factory, $fontColor="#111", $bgColor="#fef3c7", $borderColor="#b45309")
+    UpdateElementStyle(features, $fontColor="#111", $bgColor="#ffe4e6", $borderColor="#be123c")
+    UpdateElementStyle(utilities, $fontColor="#111", $bgColor="#dcfce7", $borderColor="#15803d")
+    UpdateElementStyle(postgres, $fontColor="#111", $bgColor="#f3e8ff", $borderColor="#7e22ce")
+    UpdateElementStyle(s3, $fontColor="#111", $bgColor="#e0f2fe", $borderColor="#0369a1")
+    UpdateRelStyle(client, fastapi, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(fastapi, factory, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(fastapi, utilities, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(factory, features, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(factory, utilities, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(features, utilities, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(utilities, postgres, $textColor="#111", $lineColor="#334155")
+    UpdateRelStyle(utilities, s3, $textColor="#111", $lineColor="#334155")
+
+    UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
